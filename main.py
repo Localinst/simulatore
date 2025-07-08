@@ -14,9 +14,8 @@ PARAMS = {
     'd': 100.0,
     'e': 0.1,
     'N_bar': 180,
-    'v': 0.1, 
-    'min_r': 0.02,    
-    'max_r': 0.04
+    'v': 0.1,
+    'funz':0,
 }
 
 
@@ -27,35 +26,35 @@ class impresa:
         self.A = A # Patrimonio netto
         self.L = L  # Debito
         self.pi = pi # Profitto
-        self.r = PARAMS['min_r'] 
+        self.r = 0.01
 class HIAModel:
     def __init__(self, NumeroImpreseIniziali=10000):
         self.NumeroImpreseIniziali = NumeroImpreseIniziali
        
         self.impresa = [impresa(K=100, A=20, L=80) for _ in range(self.NumeroImpreseIniziali)]
-        self.PatrimonioNettoBanca = 100 #Et
+        self.PatrimonioNettoBanca = 100 #Et ******
         self.totaleCapitalePrecedente = sum(f.K for f in self.impresa)
         self.totalePatrimonioPrecedente = sum(f.A for f in self.impresa)
-        self.TassoInteresseMedioPeriodoPrecedente = PARAMS['min_r'] 
+        self.TassoInteresseMedioPeriodoPrecedente = 0.01 
         self.history = []
         self.y = 0 
         self.l = 0
         self.profittoBanca = 0
-
+        self.bancarottaImpresa=[]
 
     def run_simulation(self, numeroPeriodi):
         for t in range(1, numeroPeriodi + 1):
            
             
-            
+            self.bancarottaImpresa=[]
             # gestione fallimenti con pulizia 
-            bancarottaImpresa = [f for f in self.impresa if f.pi + f.A < 0]
+            bancarottaImpresa = [f for f in self.impresa if f.A <= 0]
+            self.bancarottaImpresa.extend(bancarottaImpresa)
             bruttoDebito = sum(max(0, f.L - f.K) for f in bancarottaImpresa)
-            self.impresa = [f for f in self.impresa if f.pi + f.A >= 0]
+            self.impresa = [f for f in self.impresa if  f.A > 0]
             
             # Reset totali per il periodo corrente
-            self.totaleCapitalePrecedente = sum(f.K for f in self.impresa)
-            self.totalePatrimonioPrecedente = sum(f.A for f in self.impresa)
+            
             self.l = 0  # Reset credito totale
 
             # Gestione nuovi entranti
@@ -78,7 +77,7 @@ class HIAModel:
                 numeratore = 2 + A_t_meno_1
                 denominatore = (2* PARAMS['c']* PARAMS['g']*(1/(PARAMS['phi']*PARAMS['c'])+ pi_t_meno_1+A_t_meno_1)+ 2*PARAMS['c']*PARAMS['g']*impresa.L)
                 
-                impresa.r = max(PARAMS['min_r'], min(PARAMS['max_r'], numeratore / denominatore))  
+                impresa.r =  numeratore / denominatore
                 # Calcolo capitale desiderato
                 try:
                     term1 = (PARAMS['phi'] - PARAMS['g']*impresa.r)/(PARAMS['c']*PARAMS['phi']*PARAMS['g']*impresa.r)
@@ -89,7 +88,7 @@ class HIAModel:
                     K_it = K_t_meno_1  # Mantiene capitale precedente in caso di errori
                 
                 impresa.K =  K_it
-                impresa.A = impresa.K - impresa.L  # Patrimonio netto aggiornato
+                impresa.A = impresa.A + impresa.pi # Patrimonio netto aggiornato ************************** AT-1 + profitti
                 # Patrimonio netto secondo pubblicazione
                 '''(1/PARAMS['phi'])*(PARAMS['g']*impresa.r - (A_t_meno_1/K_it)) '''
                 
@@ -113,7 +112,8 @@ class HIAModel:
                     ponderazione = np.sum(log_tassi * peso)
                     self.TassoInteresseMedioPeriodoPrecedente = np.exp(ponderazione)
                 else:
-                    self.TassoInteresseMedioPeriodoPrecedente = PARAMS['min_r']
+                    self.TassoInteresseMedioPeriodoPrecedente = 0.01
+                    print('*** errore tasso medio periodo precedente ***')
 
             # Aggiornamento credito totale dopo il ciclo
             self.l = sum(f.L for f in self.impresa)
@@ -127,7 +127,8 @@ class HIAModel:
 
             # Update patrimonio banca 
             self.PatrimonioNettoBanca = self.profittoBanca + self.PatrimonioNettoBanca - bruttoDebito
-
+            self.totaleCapitalePrecedente = sum(f.K for f in self.impresa)
+            self.totalePatrimonioPrecedente = sum(f.A for f in self.impresa)
             # Logging
             self.log_history(t)
 
@@ -136,19 +137,22 @@ class HIAModel:
 
     def gestioneNuoveImprese(self):
         
-
-        # Calcola probabilità entrata solo se tasso interesse non è troppo alto
-        if self.TassoInteresseMedioPeriodoPrecedente > PARAMS['max_r']:
-            return
-
-        d, e, N_bar = PARAMS['d'], PARAMS['e'], PARAMS['N_bar']
-        probabilitàEntrata = 1 / (1 + np.exp(d * (self.TassoInteresseMedioPeriodoPrecedente - e)))
         
-        numeroNuoviEntrati = int(round(probabilitàEntrata * N_bar))   
-       
-        if numeroNuoviEntrati == 0 or not self.impresa:
-            return
+        if PARAMS['funz'] == 1:
+            d, e, N_bar = PARAMS['d'], PARAMS['e'], PARAMS['N_bar']
+            probabilitàEntrata = 1 / (1 + np.exp(d * (self.TassoInteresseMedioPeriodoPrecedente - e)))
+            
+            numeroNuoviEntrati = int(round(probabilitàEntrata * N_bar))   
+        
+            if numeroNuoviEntrati == 0 or not self.impresa:
+                return
+        else:
+            if self.bancarottaImpresa :
+                numeroNuoviEntrati= len(self.bancarottaImpresa)
+            else:
+                numeroNuoviEntrati = 0
 
+        
         # Calcolo valori di riferimento per nuove imprese
         capitaleImpresePresenti = [f.K for f in self.impresa if f.K > 0]
         
@@ -157,13 +161,15 @@ class HIAModel:
 
         
         # Capitale
+        capitaleImpresePresenti = [f.K for f in self.impresa if f.K > 0]
+        
         moda = stats.mode(capitaleImpresePresenti, keepdims=True).mode[0]
 
         # Creazione nuove imprese
         for _ in range(numeroNuoviEntrati):
-            nuovoK = moda
-            nuovoA = nuovoK * PARAMS['nu']  # Utilizziamo nu invece di modaEquity_ratio
-            nuovoL = nuovoK - nuovoA
+            nuovoK = 100
+            nuovoA = 20  # Utilizziamo nu invece di modaEquity_ratio
+            nuovoL = 80
             self.impresa.append(impresa(K=nuovoK, A=nuovoA, L=nuovoL))
 
     def log_history(self, t):
@@ -184,6 +190,7 @@ class HIAModel:
 
         self.history.append({
             'periodo': t,
+            'Bancatotta' : len(self.bancarottaImpresa),
             'num_impresa': len(self.impresa),
             'produzione': self.y,
             'interesse medio': self.TassoInteresseMedioPeriodoPrecedente,
@@ -204,7 +211,7 @@ class HIAModel:
 
 if __name__ == "__main__":
     model = HIAModel()
-    model.run_simulation(100)
+    model.run_simulation(1000)
     create_excel_report(model)
     df_results = pd.DataFrame(model.history)
     
